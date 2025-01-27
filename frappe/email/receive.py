@@ -174,7 +174,21 @@ class EmailServer:
 
 		email_list = self.get_new_mails(folder)
 
-		for i, uid in enumerate(email_list[:100]):
+		num = len(email_list)
+
+		# reindexd or initial sync
+		if self.uid_reindexed and num > cint(self.settings.initial_sync_count):
+			# sort so that the most recent uid is on top of the list
+			email_list.reverse()
+			# process only up to initial_sync_count
+			email_list = email_list[:cint(self.settings.initial_sync_count)]
+			# resort, so that we load the oldest messages first
+			email_list.reverse()
+
+		if num > 100:
+			num = 100
+
+		for i, uid in enumerate(email_list[:num]):
 			try:
 				self.retrieve_message(uid, i + 1)
 			except (_socket.timeout, LoginLimitExceeded):
@@ -208,13 +222,12 @@ class EmailServer:
 
 	def check_imap_uidvalidity(self, folder):
 		# compare the UIDVALIDITY of email account and imap server
-		uid_validity = self.settings.uid_validity
+		uid_validity = cint(self.settings.uid_validity)
 
 		response, message = self.imap.status(folder, "(UIDVALIDITY UIDNEXT)")
-		current_uid_validity = self.parse_imap_response("UIDVALIDITY", message[0]) or 0
+		current_uid_validity = cint(self.parse_imap_response("UIDVALIDITY", message[0]))
 
 		uidnext = int(self.parse_imap_response("UIDNEXT", message[0]) or "1")
-		frappe.db.set_value("Email Account", self.settings.email_account, "uidnext", uidnext)
 
 		if not uid_validity or uid_validity != current_uid_validity:
 			# uidvalidity changed & all email uids are reindexed by server
@@ -223,27 +236,15 @@ class EmailServer:
 				Communication.communication_medium == "Email"
 			).where(Communication.email_account == self.settings.email_account).run()
 
-			if self.settings.use_imap:
-				# Remove {"} quotes that are added to handle spaces in IMAP Folder names
-				if folder[0] == folder[-1] == '"':
-					folder = folder[1:-1]
-				# new update for the IMAP Folder DocType
-				IMAPFolder = frappe.qb.DocType("IMAP Folder")
-				frappe.qb.update(IMAPFolder).set(IMAPFolder.uidvalidity, current_uid_validity).set(
-					IMAPFolder.uidnext, uidnext
-				).where(IMAPFolder.parent == self.settings.email_account_name).where(
-					IMAPFolder.folder_name == folder
-				).run()
-			else:
-				EmailAccount = frappe.qb.DocType("Email Account")
-				frappe.qb.update(EmailAccount).set(EmailAccount.uidvalidity, current_uid_validity).set(
-					EmailAccount.uidnext, uidnext
-				).where(EmailAccount.name == self.settings.email_account_name).run()
+			# new update for the IMAP Folder DocType
+			IMAPFolder = frappe.qb.DocType("IMAP Folder")
+			frappe.qb.update(IMAPFolder).set(IMAPFolder.uidvalidity, current_uid_validity).set(
+				IMAPFolder.uidnext, uidnext
+			).where(IMAPFolder.parent == self.settings.email_account_name).where(
+				IMAPFolder.folder_name == folder
+			).run()
 
-			sync_count = 100 if uid_validity else int(self.settings.initial_sync_count)
-			from_uid = 1 if uidnext < (sync_count + 1) or (uidnext - sync_count) < 1 else uidnext - sync_count
-			# sync last 100 email
-			self.settings.email_sync_rule = f"UID {from_uid}:{uidnext}"
+			self.settings.email_sync_rule = "ALL"
 			self.uid_reindexed = True
 
 	def parse_imap_response(self, cmd, response):

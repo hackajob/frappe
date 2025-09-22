@@ -552,7 +552,7 @@ class EmailAccount(Document):
 					if self.enable_auto_reply:
 						self.send_auto_reply(communication, mail)
 
-					# communication.send_email(is_inbound_mail_communcation=True)
+					communication.send_email(is_inbound_mail_communcation=True)
 			except SentEmailInInboxError:
 				frappe.db.rollback()
 			except Exception:
@@ -603,7 +603,7 @@ class EmailAccount(Document):
 				for folder in self.imap_folder:
 					if email_server.select_imap_folder(folder.folder_name):
 						email_server.settings["uid_validity"] = folder.uidvalidity
-						messages = email_server.get_messages(folder=f'{folder.folder_name}') or {}
+						messages = email_server.get_messages(folder=f'"{folder.folder_name}"') or {}
 						process_mail(messages, folder.append_to)
 			else:
 				# process the pop3 account
